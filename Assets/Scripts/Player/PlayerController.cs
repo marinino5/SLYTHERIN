@@ -2,90 +2,146 @@ using UnityEngine;
 
 namespace Slytherin.Player
 {
-    /// <summary>
-    /// Controlador del personaje (Albus) usando CharacterController.
-    /// - Movimiento WASD relativo a la cámara
-    /// - Salto con gravedad propia
-    /// - Sprint (Shift) con multiplicador de velocidad
-    /// - Rotación del personaje hacia donde se mueve
-    ///
-    /// Configuración:
-    /// 1. Pon este script en el GameObject del jugador (Albus).
-    /// 2. Añade un componente CharacterController (se añade solo por RequireComponent).
-    /// 3. Asigna 'cameraTransform' a Main Camera (o al rig de cámara orbital).
-    /// 4. Tag del jugador: "Player".
-    /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public class PlayerController : MonoBehaviour
     {
         [Header("Velocidades")]
-        [SerializeField] private float walkSpeed = 4f;
-        [SerializeField] private float sprintSpeed = 7f;
-        [SerializeField] private float rotationSpeed = 12f;
+        [SerializeField] private float walkSpeed = 400f;
+        [SerializeField] private float sprintSpeed = 800f;
+        [SerializeField] private float rotationSpeed = 8f;
 
         [Header("Salto y gravedad")]
-        [SerializeField] private float jumpHeight = 1.6f;
-        [SerializeField] private float gravity = -20f;
-        [SerializeField] private float groundedExtraGravity = -2f;
+        [SerializeField] private float jumpHeight = 100f;
+        [SerializeField] private float gravity = -400f;
+        [SerializeField] private float groundedExtraGravity = -15f;
 
-        [Header("Referencias")]
-        [SerializeField] private Transform cameraTransform;
-
-        [Header("Inputs (legacy Input Manager)")]
+        [Header("Inputs")]
         [SerializeField] private KeyCode sprintKey = KeyCode.LeftShift;
         [SerializeField] private KeyCode jumpKey = KeyCode.Space;
+        [SerializeField] private KeyCode sneakKey = KeyCode.LeftControl;
 
-        private CharacterController _cc;
-        private Vector3 _velocity;
-        private bool _isSprinting;
+        private CharacterController controller;
+        private Animator animator;
+        private Vector3 velocity;
+        private bool isSprinting;
+        private string currentAnimation = "";
 
-        public bool IsGrounded => _cc.isGrounded;
-        public bool IsSprinting => _isSprinting;
-        public Vector3 CurrentVelocity => _velocity;
+        public bool IsGrounded => controller != null && controller.isGrounded;
+        public bool IsSprinting => isSprinting;
+        public Vector3 CurrentVelocity => velocity;
 
         private void Awake()
         {
-            _cc = GetComponent<CharacterController>();
-            if (cameraTransform == null && Camera.main != null)
-                cameraTransform = Camera.main.transform;
+            controller = GetComponent<CharacterController>();
+
+            // Busca el Animator en el modelo hijo, por ejemplo Severu_Idle_WithSkin
+            animator = GetComponentInChildren<Animator>();
+
+            if (animator == null)
+            {
+                Debug.LogWarning("No se encontró Animator en el jugador o sus hijos.");
+            }
         }
 
         private void Update()
         {
-            // --- Entrada WASD ---
-            float h = Input.GetAxisRaw("Horizontal");
-            float v = Input.GetAxisRaw("Vertical");
-            _isSprinting = Input.GetKey(sprintKey);
-            float speed = _isSprinting ? sprintSpeed : walkSpeed;
+            MovePlayer();
+            UpdateAnimations();
+        }
 
-            // Dirección relativa a la cámara, proyectada en el plano horizontal
-            Vector3 camForward = cameraTransform != null ? cameraTransform.forward : Vector3.forward;
-            Vector3 camRight   = cameraTransform != null ? cameraTransform.right   : Vector3.right;
-            camForward.y = 0f; camRight.y = 0f;
-            camForward.Normalize(); camRight.Normalize();
+        private void MovePlayer()
+        {
+            float horizontalInput = Input.GetAxisRaw("Horizontal"); // A / D
+            float verticalInput = Input.GetAxisRaw("Vertical");     // W / S
 
-            Vector3 moveDir = (camForward * v + camRight * h).normalized;
-            Vector3 horizontal = moveDir * speed;
+            bool isSneaking = Input.GetKey(sneakKey);
+            isSprinting = Input.GetKey(sprintKey) && !isSneaking;
 
-            // --- Rotación hacia el movimiento ---
-            if (moveDir.sqrMagnitude > 0.001f)
+            float currentSpeed = walkSpeed;
+
+            if (isSprinting)
             {
-                Quaternion target = Quaternion.LookRotation(moveDir, Vector3.up);
-                transform.rotation = Quaternion.Slerp(transform.rotation, target, rotationSpeed * Time.deltaTime);
+                currentSpeed = sprintSpeed;
             }
 
-            // --- Gravedad y salto ---
-            if (_cc.isGrounded)
+            if (isSneaking)
             {
-                if (_velocity.y < 0f) _velocity.y = groundedExtraGravity;
+                currentSpeed = walkSpeed * 0.45f;
+            }
+
+            // A y D giran al jugador
+            if (Mathf.Abs(horizontalInput) > 0.01f)
+            {
+                float turnAmount = horizontalInput * rotationSpeed * 10f * Time.deltaTime;
+                transform.Rotate(0f, turnAmount, 0f);
+            }
+
+            // W y S mueven hacia adelante o atrás
+            Vector3 moveDirection = -transform.forward * verticalInput;
+            Vector3 horizontalMovement = moveDirection * currentSpeed;
+
+            // Gravedad y salto
+            if (controller.isGrounded)
+            {
+                if (velocity.y < 0f)
+                {
+                    velocity.y = groundedExtraGravity;
+                }
+
                 if (Input.GetKeyDown(jumpKey))
-                    _velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
+                {
+                    velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
+                }
             }
-            _velocity.y += gravity * Time.deltaTime;
 
-            // --- Aplicar movimiento ---
-            Vector3 finalMove = horizontal + new Vector3(0f, _velocity.y, 0f);
-            _cc.Move(finalMove * Time.deltaTime);
+            velocity.y += gravity * Time.deltaTime;
+
+            Vector3 finalMovement = horizontalMovement + new Vector3(0f, velocity.y, 0f);
+            controller.Move(finalMovement * Time.deltaTime);
+        }
+
+        private void UpdateAnimations()
+        {
+            if (animator == null) return;
+
+            float verticalInput = Input.GetAxisRaw("Vertical");
+            bool isMoving = Mathf.Abs(verticalInput) > 0.01f;
+            bool isSneaking = Input.GetKey(sneakKey);
+            bool isJumping = !controller.isGrounded;
+
+            if (isJumping)
+            {
+                PlayAnimation("Jump");
+                return;
+            }
+
+            if (!isMoving)
+            {
+                PlayAnimation("Idle");
+                return;
+            }
+
+            if (isSneaking)
+            {
+                PlayAnimation("SneakWalk");
+                return;
+            }
+
+            if (isSprinting)
+            {
+                PlayAnimation("Running");
+                return;
+            }
+
+            PlayAnimation("Walk");
+        }
+
+        private void PlayAnimation(string animationName)
+        {
+            if (currentAnimation == animationName) return;
+
+            currentAnimation = animationName;
+            animator.CrossFade(animationName, 0.15f);
         }
     }
 }
