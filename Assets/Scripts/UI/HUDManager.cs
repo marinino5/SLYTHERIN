@@ -1,86 +1,136 @@
 using UnityEngine;
-using UnityEngine.UI;
 using TMPro;
 using Slytherin.Player;
 using Slytherin.Managers;
 
 namespace Slytherin.UI
 {
-    /// <summary>
-    /// HUD del juego.
-    /// - Muestra vidas (texto o iconos)
-    /// - Muestra puntaje
-    /// - Muestra mensajes de evento (Detectado, Misión completa, etc.)
-    ///
-    /// Requiere TextMeshPro. Si no quieres TMP, cambiar TMP_Text por UnityEngine.UI.Text.
-    /// </summary>
     public class HUDManager : MonoBehaviour
     {
-        [Header("Referencias UI (TextMeshPro)")]
+        [Header("Referencias UI")]
         [SerializeField] private TMP_Text livesText;
         [SerializeField] private TMP_Text scoreText;
         [SerializeField] private TMP_Text messageText;
         [SerializeField] private CanvasGroup messagePanel;
 
-        [Header("Player ref (auto si está vacío)")]
+        [Header("Player")]
         [SerializeField] private PlayerHealth playerHealth;
+
+        [Header("Puntaje")]
+        [SerializeField] private int requiredScore = 100;
 
         [Header("Mensajes")]
         [SerializeField] private float messageDuration = 2.5f;
         [SerializeField] private float messageFadeSpeed = 4f;
 
-        private float _messageHideAt;
-        private bool _showingMessage;
+        private float messageHideAt;
+        private bool showingMessage;
+        private bool gameOver;
+        private bool levelWon;
 
         private void Start()
         {
+            Time.timeScale = 1f;
+
             if (playerHealth == null)
             {
-                var go = GameObject.FindGameObjectWithTag("Player");
-                if (go != null) playerHealth = go.GetComponent<PlayerHealth>();
+                GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+
+                if (playerGo != null)
+                    playerHealth = playerGo.GetComponent<PlayerHealth>();
             }
 
             if (playerHealth != null)
             {
                 playerHealth.OnLivesChanged.AddListener(UpdateLives);
                 playerHealth.OnDamageTaken.AddListener(() => ShowMessage("¡Detectado!"));
+                playerHealth.OnDeath.AddListener(ShowGameOver);
+
                 UpdateLives(playerHealth.CurrentLives);
             }
 
             if (GameManager.Instance != null)
             {
                 GameManager.Instance.OnScoreChanged.AddListener(UpdateScore);
-                GameManager.Instance.OnLevelWon.AddListener(msg => ShowMessage(msg, persistent: true));
+                GameManager.Instance.OnLevelWon.AddListener(ShowVictory);
+
                 UpdateScore(GameManager.Instance.Score);
             }
 
-            if (messagePanel != null) messagePanel.alpha = 0f;
+            if (messageText != null)
+                messageText.text = "";
+
+            if (messagePanel != null)
+                messagePanel.alpha = 0f;
         }
 
         private void Update()
         {
+            if ((gameOver || levelWon) && Input.GetKeyDown(KeyCode.R))
+            {
+                Time.timeScale = 1f;
+
+                if (GameManager.Instance != null)
+                    GameManager.Instance.RestartLevel();
+
+                return;
+            }
+
             if (messagePanel == null) return;
-            float target = _showingMessage ? 1f : 0f;
-            messagePanel.alpha = Mathf.MoveTowards(messagePanel.alpha, target, messageFadeSpeed * Time.deltaTime);
 
-            if (_showingMessage && Time.time > _messageHideAt) _showingMessage = false;
+            float targetAlpha = showingMessage ? 1f : 0f;
+            messagePanel.alpha = Mathf.MoveTowards(
+                messagePanel.alpha,
+                targetAlpha,
+                messageFadeSpeed * Time.unscaledDeltaTime
+            );
+
+            if (showingMessage && Time.unscaledTime > messageHideAt)
+            {
+                showingMessage = false;
+            }
         }
 
-        private void UpdateLives(int n)
+        private void UpdateLives(int lives)
         {
-            if (livesText != null) livesText.text = $"♥ {n}";
+            if (livesText != null)
+                livesText.text = $"♥ {lives}";
         }
 
-        private void UpdateScore(int s)
+        private void UpdateScore(int score)
         {
-            if (scoreText != null) scoreText.text = $"⏱ {s:D5}";
+            if (scoreText != null)
+                scoreText.text = $"⏱ {score}/{requiredScore}";
+        }
+
+        private void ShowGameOver()
+        {
+            gameOver = true;
+
+            ShowMessage("GAME OVER\nPresiona R para reiniciar", true);
+
+            Time.timeScale = 0f;
+        }
+
+        private void ShowVictory(string message)
+        {
+            levelWon = true;
+
+            ShowMessage("MISIÓN COMPLETADA\nPresiona R para reiniciar", true);
+
+            Time.timeScale = 0f;
         }
 
         public void ShowMessage(string msg, bool persistent = false)
         {
-            if (messageText != null) messageText.text = msg;
-            _showingMessage = true;
-            _messageHideAt = persistent ? float.MaxValue : Time.time + messageDuration;
+            if (messageText != null)
+                messageText.text = msg;
+
+            showingMessage = true;
+            messageHideAt = persistent ? float.MaxValue : Time.unscaledTime + messageDuration;
+
+            if (messagePanel != null)
+                messagePanel.alpha = 1f;
         }
     }
 }

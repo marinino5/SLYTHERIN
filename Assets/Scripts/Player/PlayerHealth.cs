@@ -40,10 +40,17 @@ namespace Slytherin.Player
         /// <summary>Quita 'amount' vidas (default 1) si no es invulnerable.</summary>
         public void TakeDamage(int amount = 1)
         {
-            if (IsDead || IsInvulnerable) return;
+            Debug.Log("TAKEDAMAGE EJECUTADO");
+
+            if (IsDead || IsInvulnerable)
+                return;
 
             _lastDamageTime = Time.time;
+
             CurrentLives = Mathf.Max(0, CurrentLives - amount);
+
+            Debug.Log("VIDAS RESTANTES: " + CurrentLives);
+
             OnLivesChanged?.Invoke(CurrentLives);
             OnDamageTaken?.Invoke();
 

@@ -6,35 +6,46 @@ namespace Slytherin.Player
     public class PlayerController : MonoBehaviour
     {
         [Header("Velocidades")]
-        [SerializeField] private float walkSpeed = 400f;
-        [SerializeField] private float sprintSpeed = 800f;
+        [SerializeField] private float walkSpeed = 180f;
+        [SerializeField] private float sprintSpeed = 300f;
         [SerializeField] private float rotationSpeed = 8f;
 
         [Header("Salto y gravedad")]
-        [SerializeField] private float jumpHeight = 100f;
-        [SerializeField] private float gravity = -400f;
-        [SerializeField] private float groundedExtraGravity = -15f;
+        [SerializeField] private float jumpHeight = 35f;
+        [SerializeField] private float gravity = -180f;
+        [SerializeField] private float groundedExtraGravity = -10f;
 
         [Header("Inputs")]
         [SerializeField] private KeyCode sprintKey = KeyCode.LeftShift;
         [SerializeField] private KeyCode jumpKey = KeyCode.Space;
         [SerializeField] private KeyCode sneakKey = KeyCode.LeftControl;
 
+        [Header("Animaciones normales")]
+        [SerializeField] private string idleAnimation = "Idle";
+        [SerializeField] private string walkAnimation = "Walk";
+        [SerializeField] private string runAnimation = "Running";
+        [SerializeField] private string jumpAnimation = "Jump";
+        [SerializeField] private string sneakAnimation = "SneakWalk";
+
+        [Header("Animaciones cargando mantas")]
+        [SerializeField] private string carryIdleAnimation = "Idle";
+        [SerializeField] private string carryWalkAnimation = "Walk";
+        [SerializeField] private string carryRunAnimation = "Running";
         private CharacterController controller;
         private Animator animator;
         private Vector3 velocity;
         private bool isSprinting;
+        private bool isCarrying;
         private string currentAnimation = "";
 
         public bool IsGrounded => controller != null && controller.isGrounded;
         public bool IsSprinting => isSprinting;
         public Vector3 CurrentVelocity => velocity;
+        public bool IsCarrying => isCarrying;
 
         private void Awake()
         {
             controller = GetComponent<CharacterController>();
-
-            // Busca el Animator en el modelo hijo, por ejemplo Severu_Idle_WithSkin
             animator = GetComponentInChildren<Animator>();
 
             if (animator == null)
@@ -49,10 +60,15 @@ namespace Slytherin.Player
             UpdateAnimations();
         }
 
+        public void SetCarrying(bool value)
+        {
+            isCarrying = value;
+        }
+
         private void MovePlayer()
         {
-            float horizontalInput = Input.GetAxisRaw("Horizontal"); // A / D
-            float verticalInput = Input.GetAxisRaw("Vertical");     // W / S
+            float horizontalInput = Input.GetAxisRaw("Horizontal");
+            float verticalInput = Input.GetAxisRaw("Vertical");
 
             bool isSneaking = Input.GetKey(sneakKey);
             isSprinting = Input.GetKey(sprintKey) && !isSneaking;
@@ -69,18 +85,15 @@ namespace Slytherin.Player
                 currentSpeed = walkSpeed * 0.45f;
             }
 
-            // A y D giran al jugador
             if (Mathf.Abs(horizontalInput) > 0.01f)
             {
                 float turnAmount = horizontalInput * rotationSpeed * 10f * Time.deltaTime;
                 transform.Rotate(0f, turnAmount, 0f);
             }
 
-            // W y S mueven hacia adelante o atrás
             Vector3 moveDirection = -transform.forward * verticalInput;
             Vector3 horizontalMovement = moveDirection * currentSpeed;
 
-            // Gravedad y salto
             if (controller.isGrounded)
             {
                 if (velocity.y < 0f)
@@ -111,33 +124,34 @@ namespace Slytherin.Player
 
             if (isJumping)
             {
-                PlayAnimation("Jump");
+                PlayAnimation(jumpAnimation);
                 return;
             }
 
             if (!isMoving)
             {
-                PlayAnimation("Idle");
+                PlayAnimation(isCarrying ? carryIdleAnimation : idleAnimation);
                 return;
             }
 
-            if (isSneaking)
+            if (isSneaking && !isCarrying)
             {
-                PlayAnimation("SneakWalk");
+                PlayAnimation(sneakAnimation);
                 return;
             }
 
             if (isSprinting)
             {
-                PlayAnimation("Running");
+                PlayAnimation(isCarrying ? carryRunAnimation : runAnimation);
                 return;
             }
 
-            PlayAnimation("Walk");
+            PlayAnimation(isCarrying ? carryWalkAnimation : walkAnimation);
         }
 
         private void PlayAnimation(string animationName)
         {
+            if (animator == null) return;
             if (currentAnimation == animationName) return;
 
             currentAnimation = animationName;

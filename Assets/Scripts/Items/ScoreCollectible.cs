@@ -9,7 +9,7 @@ namespace Slytherin.Items
     /// </summary>
     public class ScoreCollectible : Collectible
     {
-        [SerializeField] private int scoreAmount = 100;
+        [SerializeField] private int scoreAmount = 25;
 
         protected override void OnCollected(Collider player)
         {

@@ -1,171 +1,266 @@
 using UnityEngine;
+using UnityEngine.AI;
 using Slytherin.Player;
 
 namespace Slytherin.Enemies
 {
-    /// <summary>
-    /// VERNON — enemigo que patrulla entre dos puntos (A ↔ B).
-    /// - Camina linealmente entre patrolPointA y patrolPointB.
-    /// - Tiene un cono de visión hacia delante.
-    /// - Si detecta al jugador (en luz o muy cerca), dispara daño/game over.
-    /// - Si el jugador está en sombra (PlayerStealth.IsInLight == false), Vernon NO lo ve aunque esté en el cono,
-    ///   salvo que esté muy cerca (proximityDetectionRadius).
-    ///
-    /// Usar para Vernon en la Zona 5 del nivel.
-    /// </summary>
     public class PatrolEnemy : MonoBehaviour
     {
-        [Header("Ruta de patrullaje")]
+        private enum State { Patrol, Chase }
+
+        [Header("Ruta")]
         [SerializeField] private Transform patrolPointA;
         [SerializeField] private Transform patrolPointB;
-        [SerializeField] private float moveSpeed = 1.6f;
+
+        [Header("Velocidades")]
+        [SerializeField] private float patrolSpeed = 8f;
+        [SerializeField] private float chaseSpeed = 14f;
         [SerializeField] private float waitAtEndpoint = 0.8f;
 
-        [Header("Detección por visión")]
-        [SerializeField] private float visionRange = 6f;
-        [SerializeField, Range(5f, 180f)] private float visionAngle = 60f;
-        [Tooltip("Si el jugador está en sombra, ¿puede ser visto igual?")]
-        [SerializeField] private bool seesPlayerInDarkness = false;
+        [Header("Detección")]
+        [SerializeField] private float visionRange = 180f;
+        [SerializeField, Range(5f, 180f)] private float visionAngle = 100f;
+        [SerializeField] private float proximityDetectionRadius = 20f;
+        [SerializeField] private bool seesPlayerInDarkness = true;
 
-        [Header("Detección por proximidad (toca al jugador)")]
-        [SerializeField] private float proximityDetectionRadius = 0.9f;
+        [Header("Persecución")]
+        [SerializeField] private float losePlayerDistance = 260f;
+        [SerializeField] private float catchDistance = 12f;
 
         [Header("Daño")]
         [SerializeField] private int damageOnDetect = 1;
-        [SerializeField] private bool instaKill = false;
+        [SerializeField] private float damageCooldown = 1.2f;
 
-        [Header("Debug")]
-        [SerializeField] private bool drawGizmos = true;
+        [Header("Animaciones")]
+        [SerializeField] private string idleAnimation = "Idle";
+        [SerializeField] private string walkAnimation = "Walk";
+        [SerializeField] private string runAnimation = "Run";
+        [SerializeField] private string angryAnimation = "Angry";
+        [SerializeField] private string lookAroundAnimation = "LookAround";
 
-        private Transform _target;          // siguiente punto A o B
-        private bool _goingToB = true;
-        private float _waitUntil;
-        private Transform _playerTransform;
-        private PlayerHealth _playerHealth;
-        private PlayerStealth _playerStealth;
-        private float _detectionCooldown;
+        private State state = State.Patrol;
+        private NavMeshAgent agent;
+        private Animator animator;
+
+        private Transform currentPatrolTarget;
+        private bool goingToB = true;
+        private float waitUntil;
+
+        private Transform playerTransform;
+        private PlayerHealth playerHealth;
+        private PlayerStealth playerStealth;
+
+        private float nextDamageTime;
+        private string currentAnimation = "";
 
         private void Start()
         {
-            _target = patrolPointB != null ? patrolPointB : transform;
+            agent = GetComponent<NavMeshAgent>();
+            animator = GetComponent<Animator>();
 
-            var playerGo = GameObject.FindGameObjectWithTag("Player");
+            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+
             if (playerGo != null)
             {
-                _playerTransform = playerGo.transform;
-                _playerHealth    = playerGo.GetComponent<PlayerHealth>();
-                _playerStealth   = playerGo.GetComponent<PlayerStealth>();
+                Debug.Log("Player encontrado por Vernon: " + playerGo.name);
+
+                playerTransform = playerGo.transform;
+                playerHealth = playerGo.GetComponentInChildren<PlayerHealth>();
+                playerStealth = playerGo.GetComponentInChildren<PlayerStealth>();
+
+                if (playerHealth == null)
+                {
+                    Debug.Log("ERROR: No encontré PlayerHealth en el player");
+                }
+                else
+                {
+                    Debug.Log("PlayerHealth encontrado correctamente");
+                }
             }
+            else
+            {
+                Debug.Log("ERROR: Vernon no encontró ningún objeto con Tag Player");
+            }
+
+            currentPatrolTarget = patrolPointB;
+
+            if (agent != null)
+            {
+                agent.speed = patrolSpeed;
+            }
+
+            PlayAnimation(idleAnimation);
         }
 
         private void Update()
         {
-            Patrol();
-            TryDetectPlayer();
+            if (playerTransform == null) return;
+
+            bool canSeePlayer = CanDetectPlayer();
+
+            if (canSeePlayer)
+            {
+                state = State.Chase;
+            }
+
+            if (state == State.Chase)
+            {
+                ChasePlayer();
+            }
+            else
+            {
+                Patrol();
+            }
         }
 
         private void Patrol()
         {
-            if (patrolPointA == null || patrolPointB == null) return;
-            if (Time.time < _waitUntil) return;
+            agent.speed = patrolSpeed;
 
-            Vector3 targetPos = _target.position;
-            targetPos.y = transform.position.y; // ignorar diferencias verticales
-            Vector3 toTarget = targetPos - transform.position;
-
-            if (toTarget.magnitude < 0.1f)
+            if (patrolPointA == null || patrolPointB == null)
             {
-                _waitUntil = Time.time + waitAtEndpoint;
-                _goingToB = !_goingToB;
-                _target = _goingToB ? patrolPointB : patrolPointA;
+                PlayAnimation(idleAnimation);
                 return;
             }
 
-            Vector3 dir = toTarget.normalized;
-            transform.position += dir * moveSpeed * Time.deltaTime;
-
-            // Rotar suavemente hacia donde camina
-            Quaternion targetRot = Quaternion.LookRotation(dir, Vector3.up);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, 8f * Time.deltaTime);
-        }
-
-        private void TryDetectPlayer()
-        {
-            if (_playerTransform == null || _playerHealth == null) return;
-            if (Time.time < _detectionCooldown) return;
-
-            Vector3 toPlayer = _playerTransform.position - transform.position;
-            float dist = toPlayer.magnitude;
-
-            // (a) Proximidad: tocar al jugador = daño seguro
-            if (dist < proximityDetectionRadius)
+            if (Time.time < waitUntil)
             {
-                InflictDamage();
+                agent.isStopped = true;
+                PlayAnimation(lookAroundAnimation);
                 return;
             }
 
-            // (b) Visión por cono
-            if (dist <= visionRange)
-            {
-                float angle = Vector3.Angle(transform.forward, toPlayer);
-                if (angle <= visionAngle * 0.5f)
-                {
-                    // ¿Está en luz o lo veo aunque esté en sombra?
-                    bool playerVisible = seesPlayerInDarkness || (_playerStealth != null && _playerStealth.IsInLight);
+            agent.isStopped = false;
+            PlayAnimation(walkAnimation);
 
-                    if (playerVisible)
-                    {
-                        // Línea de visión real (no detrás de paredes)
-                        if (!Physics.Linecast(transform.position + Vector3.up * 1.4f,
-                                              _playerTransform.position + Vector3.up * 1.0f,
-                                              out RaycastHit hit) || hit.transform == _playerTransform)
-                        {
-                            InflictDamage();
-                        }
-                    }
-                }
+            if (currentPatrolTarget == null)
+            {
+                currentPatrolTarget = patrolPointB;
+            }
+
+            agent.SetDestination(currentPatrolTarget.position);
+
+            if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 1f)
+            {
+                waitUntil = Time.time + waitAtEndpoint;
+
+                goingToB = !goingToB;
+                currentPatrolTarget = goingToB ? patrolPointB : patrolPointA;
             }
         }
 
-        private void InflictDamage()
+        private void ChasePlayer()
         {
-            _detectionCooldown = Time.time + 1.0f; // 1s entre detecciones
-            if (instaKill)
+            float distance = Vector3.Distance(transform.position, playerTransform.position);
+
+            agent.speed = chaseSpeed;
+
+            Debug.Log("DISTANCIA A JUGADOR: " + distance);
+
+            if (distance <= catchDistance)
             {
-                _playerHealth.TakeDamage(99);
+                agent.isStopped = true;
+                PlayAnimation(angryAnimation);
+                DamagePlayer();
+                return;
+            }
+
+            agent.isStopped = false;
+            agent.SetDestination(playerTransform.position);
+            PlayAnimation(runAnimation);
+
+            if (distance > losePlayerDistance)
+            {
+                state = State.Patrol;
+                agent.isStopped = false;
+                agent.speed = patrolSpeed;
+            }
+        }
+
+        private bool CanDetectPlayer()
+        {
+            Vector3 toPlayer = playerTransform.position - transform.position;
+            float distance = toPlayer.magnitude;
+
+            if (distance <= proximityDetectionRadius)
+            {
+                Debug.Log("VERNON DETECTÓ AL JUGADOR POR CERCANÍA");
+                DamagePlayer();
+                return true;
+            }
+
+            if (distance > visionRange)
+            {
+                return false;
+            }
+
+            float angle = Vector3.Angle(transform.forward, toPlayer);
+
+            if (angle > visionAngle * 0.5f)
+            {
+                return false;
+            }
+
+            bool playerVisible = seesPlayerInDarkness ||
+                                 (playerStealth != null && playerStealth.IsInLight);
+
+            if (!playerVisible)
+            {
+                return false;
+            }
+
+            Debug.Log("VERNON TE ESTÁ VIENDO");
+            return true;
+        }
+
+        private void DamagePlayer()
+        {
+            Debug.Log("ENTRÓ A DAMAGE PLAYER");
+
+            if (Time.time < nextDamageTime)
+            {
+                Debug.Log("NO QUITA VIDA POR COOLDOWN");
+                return;
+            }
+
+            PlayAnimation(angryAnimation);
+
+            if (playerHealth != null)
+            {
+                playerHealth.TakeDamage(damageOnDetect);
+                Debug.Log("VIDA QUITADA POR VERNON");
             }
             else
             {
-                _playerHealth.TakeDamage(damageOnDetect);
+                Debug.Log("ERROR: Vernon no encontró PlayerHealth");
             }
+
+            nextDamageTime = Time.time + damageCooldown;
+
+            Debug.Log("VERNON TE ALCANZÓ");
         }
 
-        private void OnDrawGizmosSelected()
+        public void AlertToPlayer()
         {
-            if (!drawGizmos) return;
+            if (playerTransform == null) return;
 
-            // Ruta
-            if (patrolPointA != null && patrolPointB != null)
+            Debug.Log("VERNON RECIBIÓ ALERTA DE LA TÍA");
+
+            state = State.Chase;
+
+            if (agent != null)
             {
-                Gizmos.color = Color.cyan;
-                Gizmos.DrawLine(patrolPointA.position, patrolPointB.position);
-                Gizmos.DrawWireSphere(patrolPointA.position, 0.2f);
-                Gizmos.DrawWireSphere(patrolPointB.position, 0.2f);
+                agent.isStopped = false;
+                agent.SetDestination(playerTransform.position);
             }
+        }
+        private void PlayAnimation(string animationName)
+        {
+            if (animator == null) return;
+            if (currentAnimation == animationName) return;
 
-            // Proximidad
-            Gizmos.color = new Color(1f, 0.3f, 0.3f, 0.4f);
-            Gizmos.DrawWireSphere(transform.position, proximityDetectionRadius);
-
-            // Cono de visión
-            Gizmos.color = new Color(1f, 0.85f, 0.2f, 0.6f);
-            Vector3 origin = transform.position + Vector3.up * 1.4f;
-            Quaternion left  = Quaternion.AngleAxis(-visionAngle * 0.5f, Vector3.up);
-            Quaternion right = Quaternion.AngleAxis( visionAngle * 0.5f, Vector3.up);
-            Vector3 fwd = transform.forward * visionRange;
-            Gizmos.DrawLine(origin, origin + left  * fwd);
-            Gizmos.DrawLine(origin, origin + right * fwd);
-            Gizmos.DrawLine(origin + left * fwd, origin + right * fwd);
+            currentAnimation = animationName;
+            animator.CrossFade(animationName, 0.15f);
         }
     }
 }

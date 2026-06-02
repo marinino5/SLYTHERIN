@@ -24,7 +24,8 @@ namespace Slytherin.Enemies
 
         [Header("Visualización del cono de luz/vigilancia")]
         [SerializeField] private bool drawGizmos = true;
-
+        [Header("Alerta")]
+        [SerializeField] private PatrolEnemy vernon;
         private Transform _player;
         private PlayerHealth _playerHealth;
         private PlayerStealth _playerStealth;
@@ -34,8 +35,8 @@ namespace Slytherin.Enemies
         {
             var go = GameObject.FindGameObjectWithTag("Player");
             if (go == null) return;
-            _player        = go.transform;
-            _playerHealth  = go.GetComponent<PlayerHealth>();
+            _player = go.transform;
+            _playerHealth = go.GetComponent<PlayerHealth>();
             _playerStealth = go.GetComponent<PlayerStealth>();
         }
 
@@ -54,13 +55,21 @@ namespace Slytherin.Enemies
             if (requireLineOfSight)
             {
                 Vector3 from = transform.position;
-                Vector3 to   = _player.position + Vector3.up * 1.0f;
+                Vector3 to = _player.position + Vector3.up * 1.0f;
                 if (Physics.Linecast(from, to, out RaycastHit hit) && hit.transform != _player)
                     return; // hay un muro u objeto en medio
             }
 
             _nextDetectionTime = Time.time + detectionCooldownSec;
+
+            Debug.Log("TÍA DETECTÓ AL JUGADOR");
+
             _playerHealth.TakeDamage(damageOnDetect);
+
+            if (vernon != null)
+            {
+                vernon.AlertToPlayer();
+            }
         }
 
         private void OnDrawGizmosSelected()
